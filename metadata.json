@@ -1,0 +1,7 @@
+{
+  "name": "StoryIllustrator - Bedtime Story Maker",
+  "description": "Transform any bedtime story into a beautiful, illustrated storyboard for kids using Gemini 2.5 Flash Image. Perfect for visual storytelling and teaching morals through art.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
