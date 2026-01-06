@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState } from 'react';
 import { analyzeStory, generateSceneImage } from './services/geminiService';
 import { Scene, StoryState } from './types';
 import StoryCard from './components/StoryCard';
@@ -32,7 +32,6 @@ const App: React.FC = () => {
     setStory(null);
 
     try {
-      // 1. Analyze and break down the story
       const analysis = await analyzeStory(input);
       
       const initialScenes: Scene[] = analysis.scenes.map(s => ({
@@ -47,7 +46,7 @@ const App: React.FC = () => {
         isProcessing: true
       });
 
-      // 2. Generate images sequentially or in batches (sequential here for stability)
+      // 逐个生成图片，避免API并发压力
       for (const scene of initialScenes) {
         try {
           const url = await generateSceneImage(scene.imagePrompt);
@@ -62,89 +61,163 @@ const App: React.FC = () => {
           });
         } catch (err) {
           console.error(`Failed to generate image for scene ${scene.id}`, err);
+          setStory(prev => {
+            if (!prev) return null;
+            return {
+              ...prev,
+              scenes: prev.scenes.map(s => 
+                s.id === scene.id ? { ...s, isGenerating: false } : s
+              )
+            };
+          });
         }
       }
 
       setStory(prev => prev ? { ...prev, isProcessing: false } : null);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      setError("哎呀，故事分析出了点小差错。请检查网络或重试。");
+      if (err.message?.includes('500')) {
+        setError("服务器有点累了（500错误），请稍等片刻后点击下方按钮重试。");
+      } else {
+        setError("分析故事时出了点小状况，请检查网络或简化故事内容。");
+      }
     } finally {
       setLoading(false);
     }
   };
 
+  const handlePrint = () => {
+    const printContent = document.getElementById('printable-story');
+    if (!printContent) return;
+
+    // 创建新窗口以绕过 iframe 打印限制
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      alert("请允许弹出窗口以进行打印预览。");
+      return;
+    }
+
+    const styles = Array.from(document.querySelectorAll('style, link')).map(s => s.outerHTML).join('');
+    
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>${story?.title || '我的绘本'}</title>
+          ${styles}
+          <style>
+            @media print { .no-print { display: none !important; } }
+            body { background: white !important; padding: 20px; }
+            .story-card { break-inside: avoid; margin-bottom: 30px; border: 2px solid #fed7aa; }
+            img { max-width: 100%; height: auto; }
+          </style>
+        </head>
+        <body>
+          <div class="max-w-4xl mx-auto">
+            ${printContent.innerHTML}
+          </div>
+          <script>
+            setTimeout(() => {
+              window.print();
+              // window.close(); // 打印完后可以选则自动关闭
+            }, 1000);
+          </script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
+
   return (
     <div className="min-h-screen p-4 md:p-8 max-w-7xl mx-auto">
-      <header className="text-center mb-10">
+      <header className="text-center mb-10 no-print">
         <h1 className="text-4xl md:text-5xl font-bold text-orange-600 mb-4 flex items-center justify-center gap-3">
           <span>📖</span> 绘本工坊
         </h1>
         <p className="text-orange-800 text-lg opacity-80">
-          把你的故事变成美丽的连环画
+          陪伴孩子成长的每一幕精彩
         </p>
       </header>
 
       {!story && !loading && (
-        <div className="bg-white rounded-3xl p-6 shadow-xl border-4 border-orange-100 max-w-2xl mx-auto">
+        <div className="bg-white rounded-3xl p-6 shadow-xl border-4 border-orange-100 max-w-2xl mx-auto no-print">
           <label className="block text-xl font-bold text-gray-700 mb-4">输入你的故事内容：</label>
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
             className="w-full h-64 p-4 text-lg border-2 border-orange-200 rounded-2xl focus:ring-4 focus:ring-orange-300 focus:border-orange-500 transition-all outline-none resize-none mb-6"
-            placeholder="粘贴你的故事..."
+            placeholder="粘贴故事文本..."
           />
           <button
             onClick={handleCreateStoryboard}
             className="w-full bg-orange-500 hover:bg-orange-600 text-white font-bold py-4 rounded-2xl text-xl shadow-lg transition transform hover:-translate-y-1 active:scale-95"
           >
-            开始绘制 🎨
+            开始生成连环画 🎨
           </button>
         </div>
       )}
 
       {loading && !story && (
-        <div className="flex flex-col items-center justify-center min-h-[400px] text-center">
+        <div className="flex flex-col items-center justify-center min-h-[400px] text-center no-print">
           <div className="w-16 h-16 border-4 border-orange-200 border-t-orange-500 rounded-full animate-spin mb-6"></div>
-          <h2 className="text-2xl font-bold text-orange-600 mb-2">正在分析故事场景...</h2>
-          <p className="text-gray-500">正在把你的故事拆解成一幕幕精彩的画面</p>
+          <h2 className="text-2xl font-bold text-orange-600 mb-2">正在构思画面...</h2>
+          <p className="text-gray-500 italic">"每一张画都是通往智慧的小窗"</p>
         </div>
       )}
 
       {error && (
-        <div className="bg-red-50 border-2 border-red-200 text-red-600 p-4 rounded-2xl mb-8 text-center font-bold">
-          {error}
+        <div className="max-w-2xl mx-auto mb-8 no-print">
+          <div className="bg-red-50 border-2 border-red-200 text-red-600 p-6 rounded-3xl text-center shadow-inner">
+            <p className="font-bold text-lg mb-4">{error}</p>
+            <button 
+              onClick={handleCreateStoryboard}
+              className="bg-red-500 text-white px-6 py-2 rounded-full hover:bg-red-600 transition shadow-md"
+            >
+              重新尝试生成
+            </button>
+          </div>
         </div>
       )}
 
       {story && (
         <div className="space-y-12">
-          <div className="text-center">
-            <h2 className="text-3xl font-bold text-gray-800 mb-2">{story.title}</h2>
-            {story.isProcessing && (
-              <p className="text-orange-500 animate-pulse font-medium">插图正在快马加鞭赶来...</p>
+          <div id="printable-story" className="space-y-12">
+            <div className="text-center">
+              <h2 className="text-4xl font-bold text-gray-800 mb-2">{story.title}</h2>
+              {story.isProcessing && (
+                <p className="text-orange-500 animate-pulse font-medium no-print">AI 小画家正在努力画图中，请稍候...</p>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+              {story.scenes.map((scene) => (
+                <div key={scene.id} className="story-card">
+                  <StoryCard scene={scene} />
+                </div>
+              ))}
+            </div>
+
+            <div className="moral-section bg-orange-100 p-8 rounded-3xl text-center border-4 border-dashed border-orange-300">
+              <h3 className="text-2xl font-bold text-orange-700 mb-3">🌟 故事寓意</h3>
+              <p className="text-xl text-orange-900 leading-relaxed italic">
+                "{story.moral}"
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-col md:flex-row justify-center items-center gap-4 pb-16 no-print">
+            {!story.isProcessing && (
+              <button 
+                onClick={handlePrint}
+                className="bg-orange-500 hover:bg-orange-600 text-white font-bold py-4 px-10 rounded-full shadow-lg transition transform hover:-translate-y-1 flex items-center gap-3 text-lg"
+              >
+                <span>🖨️</span> 打印完整绘本 / PDF
+              </button>
             )}
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-            {story.scenes.map((scene) => (
-              <StoryCard key={scene.id} scene={scene} />
-            ))}
-          </div>
-
-          <div className="bg-orange-100 p-8 rounded-3xl text-center border-4 border-dashed border-orange-300">
-            <h3 className="text-2xl font-bold text-orange-700 mb-3">🌟 故事寓意</h3>
-            <p className="text-xl text-orange-900 leading-relaxed italic">
-              "{story.moral}"
-            </p>
-          </div>
-
-          <div className="flex justify-center pb-10">
             <button 
               onClick={() => setStory(null)}
-              className="bg-white text-orange-500 border-2 border-orange-500 font-bold py-3 px-8 rounded-full hover:bg-orange-50 transition"
+              className="bg-white text-orange-500 border-2 border-orange-500 font-bold py-4 px-10 rounded-full hover:bg-orange-50 transition text-lg"
             >
-              绘制另一个故事
+              换个故事试试
             </button>
           </div>
         </div>
