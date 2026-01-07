@@ -11,57 +11,74 @@
     body {
       font-family: 'Quicksand', sans-serif;
       background: #fdf6e3;
+      margin: 0;
+      padding: 0;
     }
 
     @media print {
-      body {
-        background: white !important;
-        padding: 0 !important;
-        margin: 0 !important;
+      @page {
+        margin: 15mm;
       }
       
-      /* 隐藏不需要打印的元素 */
-      .no-print, 
-      header, 
-      button, 
-      .bg-orange-100 {
-        display: none !important;
-      }
-
-      /* 打印区域容器 */
-      #printable-story {
-        display: block !important;
-      }
-
-      /* 每一帧场景的处理 */
-      .story-card {
-        break-inside: avoid;
-        page-break-inside: avoid;
-        margin-bottom: 2rem;
-        border: 2px solid #fed7aa !important;
-        box-shadow: none !important;
-        transform: none !important;
-      }
-
-      /* 强制打印背景色和图片 */
-      * {
+      body {
+        background: white !important;
         -webkit-print-color-adjust: exact !important;
         print-color-adjust: exact !important;
       }
-
-      /* 寓意部分的特殊打印样式 */
-      .moral-section {
-        display: block !important;
-        background: #fff7ed !important;
-        border: 2px dashed #fdba74 !important;
-        margin-top: 2rem;
-        padding: 1.5rem;
+      
+      .no-print {
+        display: none !important;
       }
 
-      h2 {
-        color: #c2410c !important;
-        font-size: 2.5rem !important;
-        margin-bottom: 2rem !important;
+      /* 打印容器强制撑满 */
+      #printable-story {
+        width: 100% !important;
+        display: block !important;
+      }
+
+      /* 每一个分镜卡片 */
+      .print-scene-card {
+        page-break-inside: avoid;
+        break-inside: avoid;
+        margin-bottom: 20mm;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+      }
+
+      .print-scene-card img {
+        max-width: 100%;
+        height: auto;
+        border-radius: 8mm;
+        border: 1mm solid #fed7aa;
+        margin-bottom: 5mm;
+      }
+
+      .print-scene-text {
+        font-size: 18pt;
+        line-height: 1.6;
+        color: #333;
+        padding: 0 10mm;
+      }
+
+      .print-title {
+        font-size: 32pt;
+        font-weight: bold;
+        text-align: center;
+        margin-bottom: 15mm;
+        color: #c2410c;
+      }
+
+      .print-moral {
+        page-break-before: auto;
+        break-before: auto;
+        background: #fff7ed !important;
+        border: 1mm dashed #fdba74 !important;
+        padding: 10mm;
+        border-radius: 5mm;
+        margin-top: 10mm;
+        text-align: center;
       }
     }
   </style>
