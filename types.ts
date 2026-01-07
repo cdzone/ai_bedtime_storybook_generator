@@ -1,6 +1,6 @@
 
 export interface Scene {
-  id: number;
+  id: string; // Using string for easier key management during edits
   imagePrompt: string;
   storyText: string;
   imageUrl?: string;
@@ -12,4 +12,5 @@ export interface StoryState {
   scenes: Scene[];
   moral: string;
   isProcessing: boolean;
+  isEditing: boolean;
 }
