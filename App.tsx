@@ -41,14 +41,13 @@ const App: React.FC = () => {
         isProcessing: false
       });
     } catch (err: any) {
-      setError("分析故事失败，请检查网络或重试。");
+      setError("分析故事失败，可能是因为输入内容过于复杂或包含敏感词。");
       console.error(err);
     } finally {
       setLoading(false);
     }
   };
 
-  // Scene Editing Helpers
   const updateScene = (id: string, updates: Partial<Scene>) => {
     setStory(prev => prev ? {
       ...prev,
@@ -59,8 +58,8 @@ const App: React.FC = () => {
   const addScene = (index: number) => {
     const newScene: Scene = {
       id: `scene-${Date.now()}`,
-      storyText: "新场景描述...",
-      imagePrompt: "Describe the visuals for the drawing engine...",
+      storyText: "新场景描述文字...",
+      imagePrompt: "描述具体的画面内容...",
       isGenerating: false
     };
     setStory(prev => {
@@ -78,6 +77,21 @@ const App: React.FC = () => {
     } : null);
   };
 
+  // Single Scene Retry Helper
+  const handleRetryScene = async (id: string) => {
+    const scene = story?.scenes.find(s => s.id === id);
+    if (!scene || !story) return;
+
+    try {
+      updateScene(id, { isGenerating: true, imageUrl: undefined });
+      const url = await generateSceneImage(scene.imagePrompt);
+      updateScene(id, { imageUrl: url, isGenerating: false });
+    } catch (err: any) {
+      console.error(`Retry failed for scene ${id}`, err);
+      updateScene(id, { isGenerating: false });
+    }
+  };
+
   // Phase 2: Confirm and start image generation
   const handleGenerateImages = async () => {
     if (!story) return;
@@ -86,11 +100,12 @@ const App: React.FC = () => {
     const scenesToProcess = [...story.scenes];
     
     for (const scene of scenesToProcess) {
+      if (scene.imageUrl) continue; // Skip already generated
       try {
         updateScene(scene.id, { isGenerating: true });
         const url = await generateSceneImage(scene.imagePrompt);
         updateScene(scene.id, { imageUrl: url, isGenerating: false });
-      } catch (err) {
+      } catch (err: any) {
         console.error(`Failed for scene ${scene.id}`, err);
         updateScene(scene.id, { isGenerating: false });
       }
@@ -128,7 +143,6 @@ const App: React.FC = () => {
         <p className="text-orange-800 text-lg opacity-80">让每一个睡前故事都拥有专属画面</p>
       </header>
 
-      {/* STEP 1: INPUT */}
       {!story && !loading && (
         <div className="bg-white rounded-3xl p-8 shadow-xl border-4 border-orange-100 max-w-2xl mx-auto">
           <label className="block text-xl font-bold text-gray-700 mb-4">第一步：粘贴你的小故事</label>
@@ -142,25 +156,23 @@ const App: React.FC = () => {
             onClick={handleAnalyze}
             className="w-full bg-orange-500 hover:bg-orange-600 text-white font-bold py-5 rounded-2xl text-xl shadow-lg transition transform hover:-translate-y-1"
           >
-            分析故事分镜 ✨
+            开始分镜设计 ✨
           </button>
         </div>
       )}
 
-      {/* LOADING STATE */}
       {loading && (
         <div className="flex flex-col items-center justify-center min-h-[400px]">
           <div className="w-20 h-20 border-8 border-orange-100 border-t-orange-500 rounded-full animate-spin mb-8"></div>
-          <h2 className="text-2xl font-bold text-orange-600">正在整理故事情节...</h2>
+          <h2 className="text-2xl font-bold text-orange-600">正在整理故事情节与画面设计...</h2>
         </div>
       )}
 
-      {/* STEP 2: EDITING */}
       {story && story.isEditing && (
         <div className="space-y-8 animate-fade-in">
           <div className="bg-orange-50 p-6 rounded-2xl border-2 border-orange-200 text-center">
-            <h2 className="text-2xl font-bold text-orange-700 mb-2">第二步：完善分镜设计</h2>
-            <p className="text-orange-600">您可以修改文字、调整提示词，或者增删场景，确保符合您的想象。</p>
+            <h2 className="text-2xl font-bold text-orange-700 mb-2">第二步：完善画面与文字</h2>
+            <p className="text-orange-600">您可以直接修改下方的中文描述，AI 会根据这些描述为您绘图。</p>
           </div>
 
           <div className="grid grid-cols-1 gap-6">
@@ -171,62 +183,46 @@ const App: React.FC = () => {
                 </div>
                 <div className="flex-grow space-y-4">
                   <div>
-                    <label className="block text-sm font-bold text-gray-500 mb-1 uppercase tracking-wider">绘本文字 (孩子听到的)</label>
+                    <label className="block text-sm font-bold text-gray-500 mb-1 uppercase tracking-wider">绘本念白 (讲给孩子听)</label>
                     <textarea 
                       value={scene.storyText}
                       onChange={(e) => updateScene(scene.id, { storyText: e.target.value })}
                       className="w-full p-3 border-2 border-gray-100 rounded-xl focus:border-orange-300 outline-none resize-none"
                       rows={2}
+                      placeholder="这一页要讲什么？"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-bold text-blue-400 mb-1 uppercase tracking-wider">画面提示词 (AI 看到的绘图指令)</label>
+                    <label className="block text-sm font-bold text-blue-500 mb-1 uppercase tracking-wider">画面描述 (AI 绘图依据)</label>
                     <textarea 
                       value={scene.imagePrompt}
                       onChange={(e) => updateScene(scene.id, { imagePrompt: e.target.value })}
-                      className="w-full p-3 border-2 border-blue-50 rounded-xl focus:border-blue-200 outline-none text-sm font-mono"
+                      className="w-full p-3 border-2 border-blue-50 rounded-xl focus:border-blue-300 outline-none text-base"
                       rows={3}
+                      placeholder="描述画面细节..."
                     />
                   </div>
                 </div>
                 <div className="flex md:flex-col gap-2 justify-center">
-                  <button 
-                    onClick={() => removeScene(scene.id)}
-                    className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-full transition"
-                    title="删除此场景"
-                  >
-                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                  </button>
-                  <button 
-                    onClick={() => addScene(index)}
-                    className="p-2 text-green-400 hover:text-green-600 hover:bg-green-50 rounded-full transition"
-                    title="在此之后插入场景"
-                  >
-                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" /></svg>
-                  </button>
+                  <button onClick={() => removeScene(scene.id)} className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-full transition"><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg></button>
+                  <button onClick={() => addScene(index)} className="p-2 text-green-400 hover:text-green-600 hover:bg-green-50 rounded-full transition"><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" /></svg></button>
                 </div>
               </div>
             ))}
           </div>
 
           <div className="flex justify-center gap-4 pb-12">
-            <button 
-              onClick={() => setStory(null)}
-              className="px-8 py-4 text-gray-500 font-bold hover:text-gray-700"
-            >
-              取消并返回
-            </button>
+            <button onClick={() => setStory(null)} className="px-8 py-4 text-gray-500 font-bold hover:text-gray-700">取消重来</button>
             <button 
               onClick={handleGenerateImages}
               className="bg-orange-500 hover:bg-orange-600 text-white font-bold py-4 px-12 rounded-2xl text-xl shadow-xl transition transform hover:-translate-y-1"
             >
-              确认并开始绘图 🎨
+              完成设计，开始绘图 🎨
             </button>
           </div>
         </div>
       )}
 
-      {/* STEP 3: VIEWING / GENERATING */}
       {story && !story.isEditing && (
         <div className="space-y-12">
           <div id="printable-story" className="space-y-12">
@@ -235,15 +231,27 @@ const App: React.FC = () => {
               {story.isProcessing && (
                 <div className="flex items-center justify-center gap-2 text-orange-500 font-medium no-print">
                    <div className="w-4 h-4 border-2 border-orange-500 border-t-transparent rounded-full animate-spin"></div>
-                   <span>AI 画师正在逐页绘制，请稍候...</span>
+                   <span>AI 画师正在逐页绘制中，部分复杂的描述可能需要较长时间...</span>
                 </div>
               )}
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
               {story.scenes.map((scene, index) => (
-                <div key={scene.id} className="story-card">
+                <div key={scene.id} className="story-card group relative">
                    <StoryCard scene={{...scene, id: index + 1}} />
+                   {/* Show individual retry button if generation failed */}
+                   {!scene.imageUrl && !scene.isGenerating && !story.isProcessing && (
+                     <div className="absolute inset-0 bg-white/60 flex flex-col items-center justify-center p-4 text-center rounded-3xl no-print">
+                        <p className="text-red-500 font-bold mb-4">生成失败 (可能包含敏感词)</p>
+                        <button 
+                          onClick={() => handleRetryScene(scene.id)}
+                          className="bg-orange-500 text-white px-6 py-2 rounded-full font-bold shadow-md hover:bg-orange-600 transition"
+                        >
+                          修改描述重试
+                        </button>
+                     </div>
+                   )}
                 </div>
               ))}
             </div>
@@ -257,24 +265,16 @@ const App: React.FC = () => {
           <div className="flex flex-col md:flex-row justify-center items-center gap-4 pb-20 no-print">
             {!story.isProcessing && (
               <>
-                <button 
-                  onClick={handlePrint}
-                  className="bg-orange-500 hover:bg-orange-600 text-white font-bold py-4 px-10 rounded-full shadow-lg transition flex items-center gap-3"
-                >
-                  <span>🖨️</span> 打印完整绘本
+                <button onClick={handlePrint} className="bg-orange-500 hover:bg-orange-600 text-white font-bold py-4 px-10 rounded-full shadow-lg transition flex items-center gap-3">
+                  <span>🖨️</span> 打印或导出 PDF
                 </button>
                 <button 
                   onClick={() => setStory(prev => prev ? {...prev, isEditing: true} : null)}
                   className="bg-white text-orange-500 border-2 border-orange-500 font-bold py-4 px-10 rounded-full hover:bg-orange-50 transition"
                 >
-                  修改分镜设计
+                  修改分镜重新生成
                 </button>
-                <button 
-                  onClick={() => setStory(null)}
-                  className="text-gray-400 font-medium hover:text-gray-600"
-                >
-                  开始新故事
-                </button>
+                <button onClick={() => setStory(null)} className="text-gray-400 font-medium hover:text-gray-600">创作新故事</button>
               </>
             )}
           </div>
