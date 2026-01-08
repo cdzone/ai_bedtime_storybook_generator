@@ -55,10 +55,23 @@ const App: React.FC = () => {
   };
 
   const updateScene = (id: string, updates: Partial<Scene>) => {
-    setStory(prev => prev ? {
-      ...prev,
-      scenes: prev.scenes.map(s => s.id === id ? { ...s, ...updates } : s)
-    } : null);
+    setStory(prev => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        scenes: prev.scenes.map(s => {
+          if (s.id === id) {
+            const newScene = { ...s, ...updates };
+            // 重要：如果修改了画面描述，自动清除已有的图片 URL，以便触发重新生成
+            if (updates.imagePrompt !== undefined && updates.imagePrompt !== s.imagePrompt) {
+              newScene.imageUrl = undefined;
+            }
+            return newScene;
+          }
+          return s;
+        })
+      };
+    });
   };
 
   const addScene = (index: number) => {
@@ -98,14 +111,20 @@ const App: React.FC = () => {
   const handleGenerateImages = async () => {
     if (!story) return;
     setStory(prev => prev ? { ...prev, isEditing: false, isProcessing: true } : null);
+    
+    // 我们必须获取最新的 scenes 状态
     const scenesToProcess = [...story.scenes];
+    
     for (const scene of scenesToProcess) {
+      // 只有在没有图片时才生成，因为 updateScene 已经在内容变化时清除了 imageUrl
       if (scene.imageUrl) continue;
+      
       try {
         updateScene(scene.id, { isGenerating: true });
         const url = await generateSceneImage(scene.imagePrompt);
         updateScene(scene.id, { imageUrl: url, isGenerating: false });
       } catch (err: any) {
+        console.error(`Failed to generate image for scene ${scene.id}`, err);
         updateScene(scene.id, { isGenerating: false });
       }
     }
@@ -119,7 +138,6 @@ const App: React.FC = () => {
 
     const styles = Array.from(document.querySelectorAll('style, link')).map(s => s.outerHTML).join('');
     
-    // 构建打印用的场景 HTML
     const scenesHtml = story.scenes.map((scene, idx) => `
       <div class="print-scene-card" style="${layout === 'one-per-page' ? 'page-break-after: always; min-height: 90vh; justify-content: center;' : ''}">
         <img src="${scene.imageUrl || ''}" alt="Scene ${idx + 1}" />
@@ -202,7 +220,7 @@ const App: React.FC = () => {
         <div className="space-y-8 animate-fade-in pb-20">
           <div className="bg-orange-50 p-6 rounded-2xl border-2 border-orange-200 text-center sticky top-4 z-10 shadow-lg">
             <h2 className="text-2xl font-bold text-orange-700 mb-2">第二步：完善画面与文字</h2>
-            <p className="text-orange-600">您可以直接修改下方的中文描述，确认后 AI 将为您绘图。</p>
+            <p className="text-orange-600">您可以直接修改下方的中文描述，确认后 AI 将为您绘图。修改描述会触发该页重新生成。</p>
           </div>
 
           <div className="grid grid-cols-1 gap-6">
