@@ -25,7 +25,6 @@ const App: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
-  // 打印配置
   const [paperSize, setPaperSize] = useState<PaperSize>('A4');
   const [layout, setLayout] = useState<LayoutType>('one-per-page');
 
@@ -47,7 +46,11 @@ const App: React.FC = () => {
         isProcessing: false
       });
     } catch (err: any) {
-      setError("分析故事失败，可能是因为输入内容过于复杂或包含敏感词。");
+      if (err.message?.includes('429')) {
+        setError("API 配额已耗尽或请求太频繁，请稍等一分钟后再试。");
+      } else {
+        setError("分析故事失败，请尝试简化故事内容。");
+      }
       console.error(err);
     } finally {
       setLoading(false);
@@ -61,12 +64,7 @@ const App: React.FC = () => {
         ...prev,
         scenes: prev.scenes.map(s => {
           if (s.id === id) {
-            const newScene = { ...s, ...updates };
-            // 重要：如果修改了画面描述，自动清除已有的图片 URL，以便触发重新生成
-            if (updates.imagePrompt !== undefined && updates.imagePrompt !== s.imagePrompt) {
-              newScene.imageUrl = undefined;
-            }
-            return newScene;
+            return { ...s, ...updates };
           }
           return s;
         })
@@ -96,7 +94,7 @@ const App: React.FC = () => {
     } : null);
   };
 
-  const handleRetryScene = async (id: string) => {
+  const handleGenerateSingle = async (id: string) => {
     const scene = story?.scenes.find(s => s.id === id);
     if (!scene || !story) return;
     try {
@@ -105,22 +103,21 @@ const App: React.FC = () => {
       updateScene(id, { imageUrl: url, isGenerating: false });
     } catch (err: any) {
       updateScene(id, { isGenerating: false });
+      alert(err.message === "SAFETY_FILTER" ? "画面描述可能涉及敏感内容，请修改后重试。" : "生成失败：" + err.message);
     }
   };
 
-  const handleGenerateImages = async () => {
+  const handleGenerateAllMissing = async () => {
     if (!story) return;
-    setStory(prev => prev ? { ...prev, isEditing: false, isProcessing: true } : null);
+    setStory(prev => prev ? { ...prev, isProcessing: true } : null);
     
-    // 我们必须获取最新的 scenes 状态
-    const scenesToProcess = [...story.scenes];
-    
-    for (const scene of scenesToProcess) {
-      // 只有在没有图片时才生成，因为 updateScene 已经在内容变化时清除了 imageUrl
-      if (scene.imageUrl) continue;
+    for (let i = 0; i < story.scenes.length; i++) {
+      const scene = story.scenes[i];
+      if (scene.imageUrl || scene.isGenerating) continue;
       
       try {
         updateScene(scene.id, { isGenerating: true });
+        if (i > 0) await new Promise(r => setTimeout(r, 1000)); 
         const url = await generateSceneImage(scene.imagePrompt);
         updateScene(scene.id, { imageUrl: url, isGenerating: false });
       } catch (err: any) {
@@ -142,7 +139,9 @@ const App: React.FC = () => {
       <div class="print-scene-card" style="${layout === 'one-per-page' ? 'page-break-after: always; min-height: 90vh; justify-content: center;' : ''}">
         <img src="${scene.imageUrl || ''}" alt="Scene ${idx + 1}" />
         <div class="print-scene-text">${scene.storyText}</div>
-        <div style="margin-top: 10px; font-size: 10pt; color: #999;">- ${idx + 1} -</div>
+        <div class="print-page-number">
+          <span class="page-badge">${idx + 1}</span>
+        </div>
       </div>
     `).join('');
 
@@ -155,8 +154,15 @@ const App: React.FC = () => {
             @page { size: ${paperSize}; margin: 20mm; }
             body { padding: 0; margin: 0; }
             .print-container { max-width: 100%; margin: 0 auto; }
-            ${layout === 'two-per-page' ? '.print-scene-card { height: 45vh; border-bottom: 1px dashed #eee; padding-bottom: 20px; }' : ''}
-            ${layout === 'grid' ? '.print-container { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }' : ''}
+            .print-page-number { margin-top: 20px; display: flex; justify-content: center; width: 100%; }
+            .page-badge {
+              background-color: #ea580c; color: white; width: 40px; height: 40px;
+              border-radius: 50%; display: flex; align-items: center; justify-content: center;
+              font-weight: bold; font-size: 16pt; box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+              border: 3px solid white; -webkit-print-color-adjust: exact;
+            }
+            ${layout === 'two-per-page' ? '.print-scene-card { height: 45vh; border-bottom: 2px dashed #fed7aa; padding-bottom: 20px; }' : ''}
+            ${layout === 'grid' ? '.print-container { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; }' : ''}
           </style>
         </head>
         <body>
@@ -165,16 +171,11 @@ const App: React.FC = () => {
             ${scenesHtml}
             <div class="print-moral">
               <h3 style="margin-top:0; color: #c2410c;">🌟 故事寓意</h3>
-              <p style="font-size: 16pt; italic: true;">"${story.moral}"</p>
+              <p style="font-size: 16pt; font-style: italic;">"${story.moral}"</p>
             </div>
           </div>
           <script>
-            window.onload = () => {
-              setTimeout(() => {
-                window.print();
-                window.close();
-              }, 500);
-            };
+            window.onload = () => { setTimeout(() => { window.print(); window.close(); }, 1200); };
           </script>
         </body>
       </html>
@@ -218,52 +219,118 @@ const App: React.FC = () => {
 
       {story && story.isEditing && (
         <div className="space-y-8 animate-fade-in pb-20">
-          <div className="bg-orange-50 p-6 rounded-2xl border-2 border-orange-200 text-center sticky top-4 z-10 shadow-lg">
-            <h2 className="text-2xl font-bold text-orange-700 mb-2">第二步：完善画面与文字</h2>
-            <p className="text-orange-600">您可以直接修改下方的中文描述，确认后 AI 将为您绘图。修改描述会触发该页重新生成。</p>
+          <div className="bg-white p-6 rounded-3xl border-4 border-orange-200 sticky top-4 z-20 shadow-xl flex flex-col md:flex-row items-center justify-between gap-4">
+            <div className="text-left">
+              <h2 className="text-2xl font-bold text-orange-700">分镜审阅与画面生成</h2>
+              <p className="text-orange-600 text-sm">在这里修改文字、调整提示词并直接预览画面。</p>
+            </div>
+            <div className="flex gap-3">
+              <button 
+                onClick={handleGenerateAllMissing}
+                disabled={story.isProcessing}
+                className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-3 rounded-xl font-bold shadow-lg transition-all flex items-center gap-2"
+              >
+                {story.isProcessing ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <span>🚀</span>}
+                一键生成全部画面
+              </button>
+              <button 
+                onClick={() => setStory({...story, isEditing: false})}
+                className="bg-orange-500 hover:bg-orange-600 text-white px-6 py-3 rounded-xl font-bold shadow-lg transition-all flex items-center gap-2"
+              >
+                <span>✨</span> 生成绘本成品
+              </button>
+            </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-6">
+          <div className="grid grid-cols-1 gap-8">
             {story.scenes.map((scene, index) => (
-              <div key={scene.id} className="bg-white rounded-3xl p-6 shadow-md border-2 border-orange-100 flex flex-col md:flex-row gap-6 group relative">
-                <div className="flex-shrink-0 w-12 h-12 bg-orange-500 text-white rounded-full flex items-center justify-center text-2xl font-bold">
+              <div key={scene.id} className="bg-white rounded-3xl p-6 shadow-lg border-2 border-orange-100 flex flex-col lg:flex-row gap-8 relative overflow-hidden group">
+                {/* 装饰性的背景编号 */}
+                <div className="absolute -top-4 -left-4 text-9xl font-black text-orange-50/50 pointer-events-none group-hover:text-orange-100/50 transition-colors">
                   {index + 1}
                 </div>
-                <div className="flex-grow space-y-4">
+
+                {/* 左侧：内容编辑 */}
+                <div className="flex-grow space-y-6 relative z-10">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 bg-orange-500 text-white rounded-full flex items-center justify-center text-2xl font-bold shadow-md">
+                      {index + 1}
+                    </div>
+                    <h3 className="text-xl font-bold text-gray-700">场景 {index + 1}</h3>
+                    <div className="flex-grow"></div>
+                    <button onClick={() => removeScene(scene.id)} className="p-2 text-red-300 hover:text-red-500 transition-colors"><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg></button>
+                  </div>
+                  
                   <div>
-                    <label className="block text-sm font-bold text-gray-400 mb-1 uppercase tracking-wider">画面念白</label>
+                    <label className="block text-sm font-bold text-gray-400 mb-2 uppercase tracking-wider">画面念白 (显示在绘本中)</label>
                     <textarea 
                       value={scene.storyText}
                       onChange={(e) => updateScene(scene.id, { storyText: e.target.value })}
-                      className="w-full p-3 border-2 border-gray-100 rounded-xl focus:border-orange-300 outline-none resize-none font-medium"
+                      className="w-full p-4 border-2 border-gray-50 rounded-2xl focus:border-orange-200 outline-none resize-none font-medium text-lg bg-gray-50/30"
                       rows={2}
                     />
                   </div>
+                  
                   <div>
-                    <label className="block text-sm font-bold text-blue-400 mb-1 uppercase tracking-wider">AI 画面指令 (中文)</label>
+                    <label className="block text-sm font-bold text-blue-400 mb-2 uppercase tracking-wider">AI 画面指令 (包含空间逻辑锁)</label>
                     <textarea 
                       value={scene.imagePrompt}
                       onChange={(e) => updateScene(scene.id, { imagePrompt: e.target.value })}
-                      className="w-full p-3 border-2 border-blue-50 rounded-xl focus:border-blue-300 outline-none text-base bg-blue-50/30"
-                      rows={3}
+                      className="w-full p-4 border-2 border-blue-50 rounded-2xl focus:border-blue-200 outline-none text-base bg-blue-50/30 font-mono text-sm"
+                      rows={4}
                     />
                   </div>
+
+                  <div className="pt-2">
+                    <button 
+                      onClick={() => handleGenerateSingle(scene.id)}
+                      disabled={scene.isGenerating}
+                      className={`w-full py-4 rounded-2xl font-bold text-lg shadow-md transition-all flex items-center justify-center gap-3 ${
+                        scene.imageUrl 
+                        ? 'bg-blue-50 text-blue-600 border-2 border-blue-200 hover:bg-blue-100' 
+                        : 'bg-blue-500 text-white hover:bg-blue-600'
+                      }`}
+                    >
+                      {scene.isGenerating ? (
+                        <div className="w-6 h-6 border-4 border-white border-t-transparent rounded-full animate-spin" />
+                      ) : (
+                        <span>{scene.imageUrl ? "🔄 重新生成此画面" : "🎨 生成此画面预览"}</span>
+                      )}
+                    </button>
+                  </div>
                 </div>
-                <div className="flex md:flex-col gap-2 justify-center border-l pl-4 border-gray-100">
-                  <button onClick={() => removeScene(scene.id)} className="p-2 text-red-300 hover:text-red-500 transition-colors"><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg></button>
-                  <button onClick={() => addScene(index)} className="p-2 text-green-300 hover:text-green-500 transition-colors"><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" /></svg></button>
+
+                {/* 右侧：预览 */}
+                <div className="lg:w-[400px] flex-shrink-0 relative z-10">
+                   <div className="aspect-square bg-orange-50 rounded-3xl border-4 border-orange-100 shadow-inner overflow-hidden flex items-center justify-center relative">
+                     {scene.imageUrl ? (
+                       <img src={scene.imageUrl} alt="Preview" className="w-full h-full object-cover animate-fade-in" />
+                     ) : (
+                       <div className="flex flex-col items-center gap-4 text-orange-200">
+                         {scene.isGenerating ? (
+                           <div className="flex flex-col items-center gap-4">
+                             <div className="w-16 h-16 border-8 border-orange-100 border-t-orange-500 rounded-full animate-spin"></div>
+                             <p className="font-bold text-orange-500">AI 画师工作中...</p>
+                           </div>
+                         ) : (
+                           <>
+                             <div className="text-6xl opacity-30">🖼️</div>
+                             <p className="font-medium">等待生成画面</p>
+                           </>
+                         )}
+                       </div>
+                     )}
+                   </div>
                 </div>
               </div>
             ))}
-          </div>
-
-          <div className="flex flex-col sm:flex-row justify-center gap-4">
-            <button onClick={() => setStory(null)} className="px-8 py-4 text-gray-500 font-bold hover:text-gray-700">放弃并返回</button>
+            
             <button 
-              onClick={handleGenerateImages}
-              className="bg-orange-500 hover:bg-orange-600 text-white font-bold py-4 px-12 rounded-2xl text-xl shadow-xl transition-all active:scale-95"
+              onClick={() => addScene(story.scenes.length - 1)}
+              className="bg-white border-4 border-dashed border-orange-200 p-8 rounded-3xl text-orange-300 hover:text-orange-500 hover:border-orange-400 transition-all flex flex-col items-center gap-2"
             >
-              设计完成，生成绘本 🎨
+              <span className="text-4xl">+</span>
+              <span className="font-bold">添加一个新场景</span>
             </button>
           </div>
         </div>
@@ -271,106 +338,94 @@ const App: React.FC = () => {
 
       {story && !story.isEditing && (
         <div className="space-y-12 animate-fade-in pb-20">
-          <div className="no-print bg-white p-6 rounded-3xl shadow-lg border-2 border-orange-100 max-w-4xl mx-auto">
-            <div className="flex flex-col md:flex-row items-center justify-between gap-6">
-              <div className="flex-1 space-y-4">
-                <h3 className="text-xl font-bold text-orange-700 flex items-center gap-2">
-                  <span>🖨️</span> 打印选项设置
+          <div className="no-print bg-white p-8 rounded-3xl shadow-xl border-4 border-orange-100 max-w-4xl mx-auto">
+            <div className="flex flex-col md:flex-row items-center justify-between gap-8">
+              <div className="flex-1 space-y-6">
+                <h3 className="text-2xl font-bold text-orange-700 flex items-center gap-3">
+                  <span>🖨️</span> 打印排版预览
                 </h3>
-                <div className="flex flex-wrap gap-4">
-                  <div className="flex-1 min-w-[150px]">
-                    <label className="text-xs font-bold text-gray-400 block mb-1">纸张尺寸</label>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-sm font-bold text-gray-400 block mb-2 uppercase tracking-wide">纸张尺寸</label>
                     <select 
                       value={paperSize} 
                       onChange={(e) => setPaperSize(e.target.value as PaperSize)}
-                      className="w-full p-2 border-2 border-orange-50 rounded-lg outline-none focus:border-orange-300"
+                      className="w-full p-3 bg-gray-50 border-2 border-transparent rounded-xl outline-none focus:border-orange-300 transition-all font-bold"
                     >
-                      <option value="A4">A4 (标准)</option>
-                      <option value="A5">A5 (精装小本)</option>
-                      <option value="Letter">Letter (信纸)</option>
+                      <option value="A4">A4 (标准尺寸)</option>
+                      <option value="A5">A5 (精装口袋本)</option>
+                      <option value="Letter">Letter (美国信纸)</option>
                     </select>
                   </div>
-                  <div className="flex-1 min-w-[150px]">
-                    <label className="text-xs font-bold text-gray-400 block mb-1">页面布局</label>
+                  <div>
+                    <label className="text-sm font-bold text-gray-400 block mb-2 uppercase tracking-wide">页面布局</label>
                     <select 
                       value={layout} 
                       onChange={(e) => setLayout(e.target.value as LayoutType)}
-                      className="w-full p-2 border-2 border-orange-50 rounded-lg outline-none focus:border-orange-300"
+                      className="w-full p-3 bg-gray-50 border-2 border-transparent rounded-xl outline-none focus:border-orange-300 transition-all font-bold"
                     >
-                      <option value="one-per-page">每页一张图 (大幅画)</option>
-                      <option value="two-per-page">每页两张图 (横版)</option>
+                      <option value="one-per-page">每页一图 (大幅)</option>
+                      <option value="two-per-page">每页两图 (竖向)</option>
                       <option value="grid">两列网格 (紧凑)</option>
                     </select>
                   </div>
                 </div>
               </div>
-              <button 
-                onClick={handlePrint}
-                disabled={story.isProcessing}
-                className={`px-10 py-5 rounded-2xl font-bold text-xl shadow-xl transition-all flex items-center gap-3 ${story.isProcessing ? 'bg-gray-200 text-gray-400' : 'bg-orange-500 hover:bg-orange-600 text-white'}`}
-              >
-                <span>🖨️</span> 立即打印绘本
-              </button>
+              <div className="flex flex-col gap-3">
+                <button 
+                  onClick={handlePrint}
+                  className="bg-orange-500 hover:bg-orange-600 text-white px-12 py-5 rounded-2xl font-bold text-2xl shadow-xl transition-all transform hover:-translate-y-1 flex items-center gap-4"
+                >
+                  <span>🖨️</span> 打印绘本
+                </button>
+                <button 
+                  onClick={() => setStory({...story, isEditing: true})}
+                  className="text-orange-600 font-bold hover:underline flex items-center justify-center gap-2"
+                >
+                  <span>←</span> 返回修改分镜
+                </button>
+              </div>
             </div>
           </div>
 
           <div id="printable-story" className="space-y-12">
             <div className="text-center">
-              <h2 className="text-4xl font-bold text-gray-800 mb-4">{story.title}</h2>
-              {story.isProcessing && (
-                <div className="flex items-center justify-center gap-2 text-orange-500 font-medium no-print">
-                   <div className="w-4 h-4 border-2 border-orange-500 border-t-transparent rounded-full animate-spin"></div>
-                   <span>AI 画师正在全力绘图中...</span>
-                </div>
-              )}
+              <h2 className="text-5xl font-bold text-gray-800 mb-4">{story.title}</h2>
+              <div className="w-24 h-2 bg-orange-400 mx-auto rounded-full mb-12"></div>
             </div>
 
-            <div className={`grid gap-8 ${layout === 'grid' ? 'grid-cols-1 md:grid-cols-2' : layout === 'two-per-page' ? 'grid-cols-1' : 'grid-cols-1 max-w-3xl mx-auto'}`}>
+            <div className={`grid gap-12 ${layout === 'grid' ? 'grid-cols-1 md:grid-cols-2' : layout === 'two-per-page' ? 'grid-cols-1' : 'grid-cols-1 max-w-4xl mx-auto'}`}>
               {story.scenes.map((scene, index) => (
                 <div key={scene.id} className="relative group">
                    <StoryCard scene={{...scene, id: index + 1}} />
-                   {!scene.imageUrl && !scene.isGenerating && !story.isProcessing && (
-                     <div className="absolute inset-0 bg-white/80 flex flex-col items-center justify-center p-6 text-center rounded-3xl no-print border-4 border-dashed border-red-200">
-                        <p className="text-red-500 font-bold mb-4">生成出现了一些问题</p>
-                        <button 
-                          onClick={() => handleRetryScene(scene.id)}
-                          className="bg-orange-500 text-white px-8 py-2 rounded-full font-bold hover:bg-orange-600 transition shadow-lg"
-                        >
-                          重新生成
-                        </button>
-                     </div>
-                   )}
                 </div>
               ))}
             </div>
 
-            <div className="moral-section bg-orange-100 p-8 rounded-3xl text-center border-4 border-dashed border-orange-300 max-w-4xl mx-auto">
-              <h3 className="text-2xl font-bold text-orange-700 mb-3">🌟 故事寓意</h3>
-              <p className="text-xl text-orange-900 leading-relaxed italic">"{story.moral}"</p>
+            <div className="moral-section bg-orange-100 p-12 rounded-3xl text-center border-8 border-double border-orange-300 max-w-4xl mx-auto mt-20">
+              <h3 className="text-3xl font-bold text-orange-700 mb-6 flex items-center justify-center gap-3">
+                 <span>🌟</span> 故事小道理
+              </h3>
+              <p className="text-2xl text-orange-900 leading-relaxed italic font-bold">"{story.moral}"</p>
             </div>
           </div>
 
-          <div className="flex flex-col sm:flex-row justify-center items-center gap-6 no-print">
-            <button 
-              onClick={() => setStory(prev => prev ? {...prev, isEditing: true} : null)}
-              className="text-orange-600 font-bold hover:underline"
-            >
-              ← 修改分镜内容
-            </button>
+          <div className="flex flex-col items-center justify-center pt-10 gap-4 no-print border-t border-orange-100">
+            <p className="text-gray-400 font-medium">绘本制作完成？开始下一个新故事吧</p>
             <button 
               onClick={() => setStory(null)}
-              className="text-gray-400 font-medium hover:text-gray-600"
+              className="bg-white text-orange-600 border-2 border-orange-200 hover:bg-orange-50 px-10 py-4 rounded-2xl font-bold text-lg shadow-md transition-all flex items-center gap-2"
             >
-              创建另一个故事
+              <span>✨</span> 创作另一个新故事
             </button>
           </div>
         </div>
       )}
 
       {error && (
-        <div className="max-w-xl mx-auto mt-8 bg-red-50 border-2 border-red-100 p-6 rounded-3xl text-center text-red-600 animate-bounce">
-          <p className="font-bold mb-4">{error}</p>
-          <button onClick={() => setError(null)} className="bg-red-500 text-white px-6 py-2 rounded-full font-bold">确定</button>
+        <div className="max-w-xl mx-auto mt-8 bg-red-50 border-4 border-red-100 p-8 rounded-3xl text-center text-red-600 animate-fade-in shadow-xl">
+          <p className="font-bold text-xl mb-6">{error}</p>
+          <button onClick={() => setError(null)} className="bg-red-500 text-white px-10 py-3 rounded-full font-bold shadow-lg hover:bg-red-600 transition-all">我知道了</button>
         </div>
       )}
     </div>
